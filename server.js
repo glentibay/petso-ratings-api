@@ -5,14 +5,13 @@ const app = express();
 app.use(express.json());
 
 // CORS is handled by Shopify App Proxy automatically
-// but let's allow preview domain just in case
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   next();
 });
 
-// GET route (for testing in browser)
+// Simple GET route (for testing in browser)
 app.get('/submit-attr-ratings', (req, res) => {
   res.json({ ok: true, message: 'Ratings endpoint is alive. POST only.' });
 });
@@ -30,7 +29,7 @@ app.post('/submit-attr-ratings', async (req, res) => {
     // Shopify product GID format
     const productGid = `gid://shopify/Product/${body.product_id}`;
 
-    // Fetch current ratings metafield
+    // 1) Read existing metafield
     const query = `
       query GetRatings($id: ID!) {
         product(id: $id) {
@@ -56,8 +55,9 @@ app.post('/submit-attr-ratings', async (req, res) => {
     );
 
     const json1 = await resp1.json();
-    let current = {};
+    console.log('Existing ratings metafield:', JSON.stringify(json1, null, 2));
 
+    let current = {};
     if (json1?.data?.product?.metafield?.value) {
       try {
         current = JSON.parse(json1.data.product.metafield.value);
@@ -66,31 +66,39 @@ app.post('/submit-attr-ratings', async (req, res) => {
       }
     }
 
-    // Merge new ratings
+    // 2) Merge new ratings into existing
     const updated = { ...current };
 
-    for (const key of [
+    // Ensure total_reviews exists and increment
+    if (typeof updated.total_reviews !== 'number') {
+      updated.total_reviews = 0;
+    }
+    updated.total_reviews += 1;
+
+    const keys = [
       'value_for_money',
       'tracking',
       'dust_level',
       'durability',
       'clumping',
       'odour_control',
-    ]) {
+    ];
+
+    keys.forEach((key) => {
       if (body[key]) {
         const val = Number(body[key]);
-        if (!updated[key]) updated[key] = { avg: 0, count: 0 };
-
+        if (!updated[key]) {
+          updated[key] = { avg: 0, count: 0 };
+        }
         const oldAvg = updated[key].avg || 0;
         const oldCount = updated[key].count || 0;
-
         updated[key].count = oldCount + 1;
         updated[key].avg =
           (oldAvg * oldCount + val) / updated[key].count;
       }
-    }
+    });
 
-    // Save metafield (let Shopify use existing definition's type)
+    // 3) Save metafield back to Shopify
     const mutation = `
       mutation SaveRatings($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -136,8 +144,7 @@ app.post('/submit-attr-ratings', async (req, res) => {
     const json2 = await resp2.json();
     console.log('Save response:', JSON.stringify(json2, null, 2));
 
-    const metafieldsSet =
-      json2 && json2.data && json2.data.metafieldsSet;
+    const metafieldsSet = json2?.data?.metafieldsSet;
 
     if (!metafieldsSet) {
       return res
@@ -152,7 +159,6 @@ app.post('/submit-attr-ratings', async (req, res) => {
       });
     }
 
-    // Success – send back the saved value for debugging
     return res.json({
       message: 'Thanks for rating!',
       saved: metafieldsSet.metafields,
