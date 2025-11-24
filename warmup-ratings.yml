@@ -1,0 +1,15 @@
+name: Warm up Petso Ratings API
+
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit Shopify app proxy to warm Render
+        run: |
+          curl -sS -m 10 "https://www.petso.com.au/apps/submit-attr-ratings?warmup=true" || true
